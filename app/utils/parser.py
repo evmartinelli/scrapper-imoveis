@@ -6,26 +6,60 @@ def parse_imoveis_html(html: str) -> List[Imovel]:
     soup = BeautifulSoup(html, "html.parser")
     resultado = []
 
-    # Exemplo baseado na estrutura visível da Caixa
-    blocos = soup.select("div.resultadoBuscaImovel")
+    blocos = soup.select("ul.control-group")
 
     for bloco in blocos:
         try:
-            codigo = bloco.get("id", "")
-            endereco = bloco.select_one(".enderecoImovel")
-            cidade_estado = bloco.select_one(".cidadeEstado")
-            valor = bloco.select_one(".valorImovel")
-            situacao = bloco.select_one(".infoSituacao")
+            # Código do imóvel (vem no onclick do botão de detalhes)
+            onclick = bloco.select_one("a[onclick*='detalhe_imovel']")
+            codigo = ""
+            if onclick:
+                import re
+                match = re.search(r"detalhe_imovel\((\d+)\)", onclick.get("onclick"))
+                if match:
+                    codigo = match.group(1)
+
+            # Endereço completo e descrição
+            detalhe = bloco.select_one(".form-row .control-item span font")
+            endereco = ""
+            if detalhe and "<br />" in str(detalhe):
+                endereco = str(detalhe).split("<br />")
+                endereco = [BeautifulSoup(e, "html.parser").text.strip() for e in endereco]
+                endereco = next((e for e in endereco if "," in e or "RUA" in e or "AVENIDA" in e), "")
+
+            # Cidade e estado
+            local_info = bloco.select_one("strong font")
+            cidade = estado = ""
+            if local_info:
+                cidade_estado_raw = local_info.text.strip().split("|")[0].strip()
+                if " - " in cidade_estado_raw:
+                    cidade, *bairro = cidade_estado_raw.split(" - ")
+                    cidade = cidade.strip()
+                    estado = "SP"  # fixado pois já vem do filtro; pode ser dinâmico depois
+
+            # Valor
+            valor_raw = bloco.select_one("strong font")
+            valor = ""
+            if valor_raw and "R$" in valor_raw.text:
+                valor = valor_raw.text.split("R$")[-1].strip()
+                valor = "R$ " + valor
+
+            # Situação (extrair resumo descritivo)
+            info_font = bloco.select(".form-row font")
+            situacao = ""
+            if len(info_font) > 1:
+                situacao = info_font[0].text.strip()
 
             resultado.append(Imovel(
-                codigo=codigo.strip(),
-                endereco=endereco.text.strip() if endereco else "",
-                cidade=cidade_estado.text.split("/")[0].strip() if cidade_estado else "",
-                estado=cidade_estado.text.split("/")[-1].strip() if cidade_estado else "",
-                valor=valor.text.strip() if valor else "",
-                situacao=situacao.text.strip() if situacao else ""
+                codigo=codigo,
+                endereco=endereco,
+                cidade=cidade,
+                estado=estado,
+                valor=valor,
+                situacao=situacao
             ))
-        except Exception as e:
-            continue  # Silencia erros de parsing individual
+
+        except Exception:
+            continue  # Silencia erros e continua
 
     return resultado
