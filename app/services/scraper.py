@@ -2,10 +2,11 @@ import httpx
 from bs4 import BeautifulSoup
 from typing import List
 from app.models.imovel import Imovel
-from app.utils.parser import parse_imoveis_html
+from app.utils.parser import parse_imoveis_html, parse_detalhe_html
 
 PESQUISA_URL = "https://venda-imoveis.caixa.gov.br/sistema/carregaPesquisaImoveis.asp"
 LISTA_URL = "https://venda-imoveis.caixa.gov.br/sistema/carregaListaImoveis.asp"
+DETALHE_URL = "https://venda-imoveis.caixa.gov.br/sistema/detalhe-imovel.asp"
 
 HEADERS = {
     "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
@@ -53,4 +54,25 @@ async def buscar_imoveis(estado: str, cidade_id: str) -> List[Imovel]:
         # 4. Parsear HTML da lista de imóveis
         imoveis = parse_imoveis_html(resposta_detalhes.text)
 
+        # 5. Buscar detalhes para cada imóvel
+        for imovel in imoveis:
+            detalhes = await buscar_detalhes_imovel(imovel.codigo)
+            for chave, valor in detalhes.items():
+                setattr(imovel, chave, valor)
+
         return imoveis
+
+
+async def buscar_detalhes_imovel(codigo: str) -> dict:
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        response = await client.post(DETALHE_URL, data={
+            "hdnimovel": codigo,
+            "hdn_estado": "SP",
+            "hdn_cidade": "9205",
+            "hdnorigem": "buscaimovel",
+        }, headers=HEADERS)
+
+        if response.status_code != 200:
+            return {}
+
+        return parse_detalhe_html(response.text)
