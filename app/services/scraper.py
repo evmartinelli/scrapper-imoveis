@@ -1,6 +1,7 @@
 import httpx
 from bs4 import BeautifulSoup
 from typing import List
+from itertools import repeat
 from more_itertools import chunked
 from concurrent.futures import ThreadPoolExecutor
 from app.models.imovel import Imovel
@@ -18,12 +19,12 @@ HEADERS = {
     "Referer": "https://venda-imoveis.caixa.gov.br/sistema/busca-imovel.asp?sltTipoBusca=imoveis"
 }
 
-def buscar_detalhes_imovel_sync(codigo: str) -> dict:
+def buscar_detalhes_imovel_sync(codigo: str, estado: str, cidade_id: str) -> dict:
     with httpx.Client(follow_redirects=True) as client:
         response = client.post(DETALHE_URL, data={
             "hdnimovel": codigo,
-            "hdn_estado": "SP",  # tornar dinâmico se necessário
-            "hdn_cidade": "9205",
+            "hdn_estado": estado, 
+            "hdn_cidade": cidade_id,
             "hdnorigem": "buscaimovel",
         }, headers=HEADERS)
 
@@ -69,7 +70,12 @@ async def buscar_imoveis(estado: str, cidade_id: str) -> List[Imovel]:
 
     # Fetch de detalhes em paralelo com threads
     with ThreadPoolExecutor(max_workers=10) as executor:
-        detalhes_list = list(executor.map(buscar_detalhes_imovel_sync, [i.codigo for i in todos_imoveis]))
+        detalhes_list = list(executor.map(
+            buscar_detalhes_imovel_sync,
+            [i.codigo for i in todos_imoveis],
+            repeat(estado),
+            repeat(cidade_id)
+        ))
 
     for imovel, detalhes in zip(todos_imoveis, detalhes_list):
         for chave, valor in detalhes.items():
