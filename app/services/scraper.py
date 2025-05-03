@@ -1,6 +1,8 @@
 import httpx
 from bs4 import BeautifulSoup
 from typing import List
+from more_itertools import chunked
+from concurrent.futures import ThreadPoolExecutor
 from app.models.imovel import Imovel
 from app.utils.parser import parse_imoveis_html, parse_detalhe_html
 
@@ -16,9 +18,22 @@ HEADERS = {
     "Referer": "https://venda-imoveis.caixa.gov.br/sistema/busca-imovel.asp?sltTipoBusca=imoveis"
 }
 
+def buscar_detalhes_imovel_sync(codigo: str) -> dict:
+    with httpx.Client(follow_redirects=True) as client:
+        response = client.post(DETALHE_URL, data={
+            "hdnimovel": codigo,
+            "hdn_estado": "SP",  # tornar dinâmico se necessário
+            "hdn_cidade": "9205",
+            "hdnorigem": "buscaimovel",
+        }, headers=HEADERS)
+
+        if response.status_code != 200:
+            return {}
+
+        return parse_detalhe_html(response.text)
+
 async def buscar_imoveis(estado: str, cidade_id: str) -> List[Imovel]:
     async with httpx.AsyncClient() as client:
-        # 1. Buscar os hdnImovN via POST
         dados_busca = {
             "hdn_estado": estado,
             "hdn_cidade": cidade_id,
@@ -32,47 +47,32 @@ async def buscar_imoveis(estado: str, cidade_id: str) -> List[Imovel]:
         resposta = await client.post(PESQUISA_URL, data=dados_busca, headers=HEADERS)
         soup = BeautifulSoup(resposta.text, "html.parser")
 
-        # 2. Extrair todos os hdnImovN e concatenar os valores
         codigos = []
         for i in range(1, 10):
             campo = soup.find("input", {"id": f"hdnImov{i}"})
             if campo and campo.get("value"):
-                codigos.append(campo["value"])
+                codigos.extend(campo["value"].split("||"))
 
         if not codigos:
             return []
 
-        hdnImov = "||".join("||".join(c.split("||")) for c in codigos)
+        todos_imoveis = []
+        for grupo in chunked(codigos, 10):
+            hdnImov = "||".join(grupo)
+            resposta_detalhes = await client.post(
+                LISTA_URL,
+                data={"hdnImov": hdnImov},
+                headers=HEADERS
+            )
+            imoveis = parse_imoveis_html(resposta_detalhes.text)
+            todos_imoveis.extend(imoveis)
 
-        # 3. Fazer o POST com os códigos para obter os dados
-        resposta_detalhes = await client.post(
-            LISTA_URL,
-            data={"hdnImov": hdnImov},
-            headers=HEADERS
-        )
+    # Fetch de detalhes em paralelo com threads
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        detalhes_list = list(executor.map(buscar_detalhes_imovel_sync, [i.codigo for i in todos_imoveis]))
 
-        # 4. Parsear HTML da lista de imóveis
-        imoveis = parse_imoveis_html(resposta_detalhes.text)
+    for imovel, detalhes in zip(todos_imoveis, detalhes_list):
+        for chave, valor in detalhes.items():
+            setattr(imovel, chave, valor)
 
-        # 5. Buscar detalhes para cada imóvel
-        for imovel in imoveis:
-            detalhes = await buscar_detalhes_imovel(imovel.codigo)
-            for chave, valor in detalhes.items():
-                setattr(imovel, chave, valor)
-
-        return imoveis
-
-
-async def buscar_detalhes_imovel(codigo: str) -> dict:
-    async with httpx.AsyncClient(follow_redirects=True) as client:
-        response = await client.post(DETALHE_URL, data={
-            "hdnimovel": codigo,
-            "hdn_estado": "SP",
-            "hdn_cidade": "9205",
-            "hdnorigem": "buscaimovel",
-        }, headers=HEADERS)
-
-        if response.status_code != 200:
-            return {}
-
-        return parse_detalhe_html(response.text)
+    return todos_imoveis
