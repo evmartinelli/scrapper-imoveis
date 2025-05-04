@@ -1,6 +1,9 @@
 from fastapi import FastAPI
 from mangum import Mangum
 from app.api.v1.endpoints import router as imoveis_router
+import logging
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 app = FastAPI(title="Scraper Imóveis Caixa")
 

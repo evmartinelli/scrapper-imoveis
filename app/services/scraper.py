@@ -24,22 +24,28 @@ logger = logging.getLogger(__name__)
 
 def buscar_detalhes_imovel_sync(codigo: str, estado: str, cidade_id: str) -> dict:
     logger.info(f"Buscando detalhes do imóvel {codigo} - {estado} - {cidade_id}")
-    
-    with httpx.Client(follow_redirects=True) as client:
-        response = client.post(DETALHE_URL, data={
-            "hdnimovel": codigo,
-            "hdn_estado": estado, 
-            "hdn_cidade": cidade_id,
-            "hdnorigem": "buscaimovel",
-        }, headers=HEADERS)
+    try:
+        with httpx.Client(follow_redirects=True, timeout=10) as client:
+            response = client.post(DETALHE_URL, data={
+                "hdnimovel": codigo,
+                "hdn_estado": estado, 
+                "hdn_cidade": cidade_id,
+                "hdnorigem": "buscaimovel",
+            }, headers=HEADERS)
 
-        if response.status_code != 200:
-            return {}
+            if response.status_code != 200:
+                logger.warning(f"Falha ao buscar detalhes do imóvel {codigo}: status={response.status_code}")
+                return {}
 
-        return parse_detalhe_html(response.text)
+            return parse_detalhe_html(response.text)
+    except Exception as e:
+        logger.error(f"Erro ao buscar detalhes do imóvel {codigo}: {str(e)}")
+        return {}
 
 async def buscar_imoveis(estado: str, cidade_id: str) -> List[Imovel]:
-    async with httpx.AsyncClient() as client:
+    logger.info(f"Iniciando busca de imóveis para estado={estado}, cidade_id={cidade_id}")
+
+    async with httpx.AsyncClient(timeout=15) as client:
         dados_busca = {
             "hdn_estado": estado,
             "hdn_cidade": cidade_id,
@@ -50,11 +56,8 @@ async def buscar_imoveis(estado: str, cidade_id: str) -> List[Imovel]:
             "hdn_vg_garagem": "Selecione"
         }
 
-        logger.info(f"Iniciando Busca {estado} - {cidade_id}")
-        
         resposta = await client.post(PESQUISA_URL, data=dados_busca, headers=HEADERS)
-        
-        logger.info(f"Busca concluída {estado} - {cidade_id}")
+        logger.info(f"Resposta da pesquisa: status={resposta.status_code}, tamanho={len(resposta.text)}")
 
         soup = BeautifulSoup(resposta.text, "html.parser")
 
@@ -64,7 +67,10 @@ async def buscar_imoveis(estado: str, cidade_id: str) -> List[Imovel]:
             if campo and campo.get("value"):
                 codigos.extend(campo["value"].split("||"))
 
+        logger.info(f"Encontrados {len(codigos)} códigos de imóveis")
+
         if not codigos:
+            logger.warning("Nenhum código de imóvel encontrado na resposta.")
             return []
 
         todos_imoveis = []
@@ -76,10 +82,12 @@ async def buscar_imoveis(estado: str, cidade_id: str) -> List[Imovel]:
                 headers=HEADERS
             )
             imoveis = parse_imoveis_html(resposta_detalhes.text)
+            logger.info(f"Chunk retornou {len(imoveis)} imóveis")
             todos_imoveis.extend(imoveis)
 
-    # Fetch de detalhes em paralelo com threads
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    logger.info(f"Iniciando busca de detalhes para {len(todos_imoveis)} imóveis")
+
+    with ThreadPoolExecutor(max_workers=5) as executor:
         detalhes_list = list(executor.map(
             buscar_detalhes_imovel_sync,
             [i.codigo for i in todos_imoveis],
@@ -91,4 +99,5 @@ async def buscar_imoveis(estado: str, cidade_id: str) -> List[Imovel]:
         for chave, valor in detalhes.items():
             setattr(imovel, chave, valor)
 
+    logger.info(f"Busca concluída: total de imóveis com detalhes = {len(todos_imoveis)}")
     return todos_imoveis
