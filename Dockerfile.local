@@ -1,0 +1,43 @@
+# Base image com suporte a locale e build otimizado
+FROM python:3.13-slim
+
+# Evita prompts interativos durante instalação de pacotes
+ENV DEBIAN_FRONTEND=noninteractive \
+  PYTHONDONTWRITEBYTECODE=1 \
+  PYTHONUNBUFFERED=1
+
+# Define o diretório de trabalho
+WORKDIR /app
+
+# Instala dependências de sistema mínimas necessárias
+RUN apt-get update && apt-get install -y --no-install-recommends \
+  build-essential \
+  gcc \
+  libffi-dev \
+  libpq-dev \
+  curl \
+  ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
+# Cria um usuário não-root para rodar a aplicação
+RUN useradd -m -s /bin/bash appuser
+
+# Copia e instala dependências em ambiente isolado
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+  pip install --no-cache-dir -r requirements.txt
+
+# Copia o restante da aplicação
+COPY ./app ./app
+
+# Define permissões
+RUN chown -R appuser:appuser /app
+
+# Troca para o usuário não-root
+USER appuser
+
+# Expõe a porta da aplicação
+EXPOSE 8000
+
+# Usa uvicorn para servir a FastAPI (modo recomendado)
+CMD ["fastapi", "run", "app/main.py", "--port", "8000"]

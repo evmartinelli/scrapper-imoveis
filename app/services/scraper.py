@@ -1,3 +1,4 @@
+import logging
 import httpx
 from bs4 import BeautifulSoup
 from typing import List
@@ -19,7 +20,11 @@ HEADERS = {
     "Referer": "https://venda-imoveis.caixa.gov.br/sistema/busca-imovel.asp?sltTipoBusca=imoveis"
 }
 
+logger = logging.getLogger(__name__)
+
 def buscar_detalhes_imovel_sync(codigo: str, estado: str, cidade_id: str) -> dict:
+    logger.info(f"Buscando detalhes do imóvel {codigo} - {estado} - {cidade_id}")
+    
     with httpx.Client(follow_redirects=True) as client:
         response = client.post(DETALHE_URL, data={
             "hdnimovel": codigo,
@@ -45,7 +50,12 @@ async def buscar_imoveis(estado: str, cidade_id: str) -> List[Imovel]:
             "hdn_vg_garagem": "Selecione"
         }
 
+        logger.info(f"Iniciando Busca {estado} - {cidade_id}")
+        
         resposta = await client.post(PESQUISA_URL, data=dados_busca, headers=HEADERS)
+        
+        logger.info(f"Busca concluída {estado} - {cidade_id}")
+
         soup = BeautifulSoup(resposta.text, "html.parser")
 
         codigos = []
