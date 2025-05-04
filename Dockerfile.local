@@ -37,7 +37,7 @@ RUN chown -R appuser:appuser /app
 USER appuser
 
 # Expõe a porta da aplicação
-EXPOSE 8000
+EXPOSE 8004
 
 # Usa uvicorn para servir a FastAPI (modo recomendado)
-CMD ["fastapi", "run", "app/main.py", "--port", "8000"]
+CMD ["fastapi", "run", "app/main.py", "--port", "8004"]
